@@ -50,8 +50,9 @@ module JIT
           asm.mov(STACK[stack_size], C.to_value(1))
           stack_size += 1
         in :putobject
-          operand = insn.operands.first
-          asm.mov(STACK[stack_size], C.to_value(2)) # TODO
+          # takes 1 arugment. Is it always so?
+          operand = iseq.body.iseq_encoded[insn_index + 1]
+          asm.mov(STACK[stack_size], operand)
           stack_size += 1
         in :opt_plus
           stack_size -= 1
