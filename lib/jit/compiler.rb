@@ -20,6 +20,10 @@ module JIT
       @jit_pos = 0
     end
 
+    STACK = [:r8]
+    EC = :rdi
+    CFP = :rsi
+
     # Compile a method. Called after --rjit-call-threshold calls.
     def compile(iseq)
       # Write machine code to this assembler.
@@ -27,16 +31,20 @@ module JIT
 
       # Iterate over each YARV instruction.
       insn_index = 0
+      stack_size = 0
+
       while insn_index < iseq.body.iseq_size
         insn = INSNS.fetch(C.rb_vm_insn_decode(iseq.body.iseq_encoded[insn_index]))
         case insn.name
         in :nop
           # none
         in :putnil
-          asm.mov(:rax, 0x4)
-          asm.push(:rax)
+          asm.mov(STACK[stack_size], 0x4)
+          stack_size += 1
         in :leave
-          asm.pop(:rax)
+          asm.add(CFP, 8)
+          asm.mov([EC, 8], CFP)
+          asm.mov(:rax, STACK[stack_size - 1])
           asm.ret
         end
         insn_index += insn.len
