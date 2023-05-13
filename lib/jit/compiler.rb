@@ -55,12 +55,39 @@ module JIT
           asm.mov(STACK[stack_size], operand)
           stack_size += 1
         in :opt_plus
+          rhs = STACK[stack_size - 1]
+          lhs = STACK[stack_size - 2]
           stack_size -= 1
-          asm.mov(:rax, STACK[stack_size])
+          asm.add(lhs, rhs)
+          asm.add(lhs, -1)
+        in :opt_minus
+          rhs = STACK[stack_size - 1]
+          lhs = STACK[stack_size - 2]
           stack_size -= 1
-          asm.add(:rax, STACK[stack_size])
-          asm.add(:rax, -1)
-          asm.mov(STACK[stack_size], :rax)
+          asm.sub(lhs, rhs)
+          asm.add(lhs, 1)
+        in :getlocal_WC_0
+          operand = iseq.body.iseq_encoded[insn_index + 1]
+          asm.mov(:rax, [CFP, C.rb_control_frame_t.offsetof(:ep)])
+          asm.mov(STACK[stack_size], [:rax, -C.VALUE.size * operand])
+          stack_size += 1
+        in :opt_lt
+          rhs = STACK[stack_size - 1]
+          lhs = STACK[stack_size - 2]
+          stack_size -= 1
+
+          asm.cmp(lhs, rhs)
+          asm.mov(lhs, C.to_value(false))
+          asm.mov(:rax, C.to_value(true))
+          asm.cmovl(lhs, :rax)
+        in :branchunless
+          operand = iseq.body.iseq_encoded[insn_index + 1]
+          asm.test(STACK[stack_size], C.to_value(false))
+          asm.jne(operand)
+          asm.test(STACK[stack_size], C.to_value(nil))
+          asm.jne(operand)
+        in :putself
+          asm.mov(STACK[stack_size], [CFP, C.rb_control_frame_t.offsetof(:self)])
           stack_size += 1
         end
         insn_index += insn.len
