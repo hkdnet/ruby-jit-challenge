@@ -20,7 +20,7 @@ module JIT
       @jit_pos = 0
     end
 
-    STACK = [:r8]
+    STACK = [:r8, :r9, :r10, :r11]
     EC = :rdi
     CFP = :rsi
 
@@ -42,10 +42,25 @@ module JIT
           asm.mov(STACK[stack_size], C.to_value(nil))
           stack_size += 1
         in :leave
-          asm.add(CFP, 64)
-          asm.mov([EC, 16], CFP)
+          asm.add(CFP, C.rb_control_frame_t.size)
+          asm.mov([EC, C.rb_execution_context_t.offsetof(:cfp)], CFP)
           asm.mov(:rax, STACK[stack_size - 1])
           asm.ret
+        in :putobject_INT2FIX_1_
+          asm.mov(STACK[stack_size], C.to_value(1))
+          stack_size += 1
+        in :putobject
+          operand = insn.operands.first
+          asm.mov(STACK[stack_size], C.to_value(2)) # TODO
+          stack_size += 1
+        in :opt_plus
+          stack_size -= 1
+          asm.mov(:rax, STACK[stack_size])
+          stack_size -= 1
+          asm.add(:rax, STACK[stack_size])
+          asm.add(:rax, -1)
+          asm.mov(STACK[stack_size], :rax)
+          stack_size += 1
         end
         insn_index += insn.len
       end
