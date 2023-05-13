@@ -32,6 +32,12 @@ module JIT
         case insn.name
         in :nop
           # none
+        in :putnil
+          asm.mov(:rax, 0x4)
+          asm.push(:rax)
+        in :leave
+          asm.pop(:rax)
+          asm.ret
         end
         insn_index += insn.len
       end
