@@ -42,8 +42,8 @@ module JIT
           asm.mov(STACK[stack_size], 0x4)
           stack_size += 1
         in :leave
-          asm.add(CFP, 8)
-          asm.mov([EC, 8], CFP)
+          asm.add(CFP, 64)
+          asm.mov([EC, 16], CFP)
           asm.mov(:rax, STACK[stack_size - 1])
           asm.ret
         end
