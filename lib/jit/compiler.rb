@@ -39,7 +39,7 @@ module JIT
         in :nop
           # none
         in :putnil
-          asm.mov(STACK[stack_size], 0x4)
+          asm.mov(STACK[stack_size], C.to_value(nil))
           stack_size += 1
         in :leave
           asm.add(CFP, 64)
