@@ -89,6 +89,47 @@ module JIT
         in :putself
           asm.mov(STACK[stack_size], [CFP, C.rb_control_frame_t.offsetof(:self)])
           stack_size += 1
+        in :opt_send_without_block
+          cd = C.rb_call_data.new(iseq.body.iseq_encoded[insn_index + 1])
+          callee_iseq = cd.cc.cme_.def.body.iseq.iseqptr
+          if callee_iseq.body.jit_func == 0 # NULL
+            compile(callee_iseq)
+          end
+
+          # | locals | cme | block_handler | frame type (callee EP) | stack bottom (callee SP) |
+
+          # rax is now sp
+          asm.mov(:rax, [CFP, C.rb_control_frame_t.offsetof(:sp)])
+          argc = C.vm_ci_argc(cd.ci)
+
+          # The arguments are on the stack. Push them to the sp.
+          argc.times do |i|
+            asm.mov([:rax, i * C.VALUE.size], STACK[stack_size - argc + i])
+          end
+
+          asm.sub(CFP, C.rb_control_frame_t.size)
+          asm.mov([EC, C.rb_execution_context_t.offsetof(:cfp)], CFP)
+          # Set SP
+          asm.add(:rax, C.VALUE.size * (argc + 3))
+          asm.mov([CFP, C.rb_control_frame_t.offsetof(:sp)], :rax)
+          # Set EP
+          asm.sub(:rax, C.VALUE.size)
+          asm.mov([CFP, C.rb_control_frame_t.offsetof(:ep)], :rax)
+          # Receiver
+          asm.sub(:rax, STACK[stack_size - argc - 1])
+          asm.mov([CFP, C.rb_control_frame_t.offsetof(:self)], :rax)
+
+          STACK.each { |e| asm.push(e) }
+
+          # Call the JIT func
+          asm.call(callee_iseq.body.jit_func)
+
+          STACK.reverse_each { |reg| asm.pop(reg) }
+
+          # Set a return value
+          asm.mov(STACK[stack_size - C.vm_ci_argc(cd.ci) - 1], :rax)
+
+          stack_size -= C.vm_ci_argc(cd.ci)
         end
         insn_index += insn.len
       end
