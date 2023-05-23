@@ -10,7 +10,7 @@ ENV RUBY_REVISION=f2c367734f847a7277f09c583a0476086313fdc9
 RUN git clone --depth=1 https://github.com/ruby/ruby /ruby && cd /ruby \
   git fetch origin $RUBY_REVISION && git reset --hard $RUBY_REVISION && \
   ./autogen.sh && \
-  ./configure --disable-install-doc --prefix=/usr/local --enable-yjit --enable-rjit=disasm && \
+  ./configure --disable-install-doc --prefix=/usr/local --enable-yjit=disasm --enable-rjit=disasm && \
   make -j8 && make install && apt-get remove -y ruby && rm -rf /ruby
 
 RUN mkdir /app

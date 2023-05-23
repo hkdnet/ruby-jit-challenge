@@ -50,6 +50,7 @@ module JIT
     end
 
     def assemble(addr)
+      set_start_addrs(addr)
       resolve_rel32(addr)
       resolve_labels
 
@@ -905,6 +906,11 @@ module JIT
       @labels[label] = @bytes.size
     end
 
+    def branch(branch)
+      @branches[@bytes.size] << branch
+      yield
+    end
+
     private
 
     def insn(prefix: 0, opcode:, rd: nil, mod_rm: nil, disp: nil, imm: nil)
@@ -1008,6 +1014,14 @@ module JIT
 
     def rel32(addr)
       [Rel32.new(addr), Rel32Pad, Rel32Pad, Rel32Pad]
+    end
+
+    def set_start_addrs(write_addr)
+      (@bytes.size + 1).times do |index|
+        @branches.fetch(index, []).each do |branch|
+          branch.start_addr = write_addr + index
+        end
+      end
     end
 
     def resolve_rel32(write_addr)

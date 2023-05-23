@@ -24,16 +24,43 @@ module JIT
     EC = :rdi
     CFP = :rsi
 
+    Branch = Struct.new(:start_addr, :compile)
+
     # Compile a method. Called after --rjit-call-threshold calls.
     def compile(iseq)
+
+      blocks = split_blocks(iseq)
+
+      branches = []
+
+      blocks.each.with_index do |block, block_index|
+        block[:start_addr] = compile_block(iseq, block, blocks, branches)
+        iseq.body.jit_func = block[:start_addr] if block_index == 0
+      end
+
+      branches.each do |branch|
+        with_addr(branch[:start_addr]) do
+          asm = Assembler.new
+          branch.compile.call(asm)
+          write(asm)
+        end
+      end
+
+      # Write machine code into memory and use it as a JIT function.
+    rescue Exception => e
+      abort e.full_message
+    end
+
+    private
+
+    def compile_block(iseq, block, blocks, branches)
       # Write machine code to this assembler.
       asm = Assembler.new
-
       # Iterate over each YARV instruction.
-      insn_index = 0
-      stack_size = 0
+      insn_index = block[:start_index]
+      stack_size = block[:stack_size]
 
-      while insn_index < iseq.body.iseq_size
+      while insn_index <= block[:end_index]
         insn = INSNS.fetch(C.rb_vm_insn_decode(iseq.body.iseq_encoded[insn_index]))
         case insn.name
         in :nop
@@ -46,6 +73,9 @@ module JIT
           asm.mov([EC, C.rb_execution_context_t.offsetof(:cfp)], CFP)
           asm.mov(:rax, STACK[stack_size - 1])
           asm.ret
+        in :putobject_INT2FIX_0_
+          asm.mov(STACK[stack_size], C.to_value(0))
+          stack_size += 1
         in :putobject_INT2FIX_1_
           asm.mov(STACK[stack_size], C.to_value(1))
           stack_size += 1
@@ -81,11 +111,26 @@ module JIT
           asm.mov(:rax, C.to_value(true))
           asm.cmovl(lhs, :rax)
         in :branchunless
-          operand = iseq.body.iseq_encoded[insn_index + 1]
-          asm.test(STACK[stack_size], C.to_value(false))
-          asm.jne(operand)
-          asm.test(STACK[stack_size], C.to_value(nil))
-          asm.jne(operand)
+          next_index = insn_index + insn.len
+          next_block = blocks.find { |b| b[:start_index] == next_index }
+
+          jump_index = next_index + iseq.body.iseq_encoded[insn_index + 1]
+          jump_block = blocks.find { |b| b[:start_index] == jump_index }
+
+          asm.test(STACK[stack_size - 1], ~C.to_value(nil))
+
+          branch = Branch.new
+          branch.compile = proc do |asm|
+            puts "branch.compile is called"
+            dummy_addr = @jit_buf + JIT_BUF_SIZE
+            asm.jz(jump_block.fetch(:start_addr, dummy_addr))
+            asm.jmp(next_block.fetch(:start_addr, dummy_addr))
+          end
+          asm.branch(branch) {
+            branch.compile.call(asm)
+          } # TODO: why yield?
+
+          branches << branch
         in :putself
           asm.mov(STACK[stack_size], [CFP, C.rb_control_frame_t.offsetof(:self)])
           stack_size += 1
@@ -134,13 +179,8 @@ module JIT
         insn_index += insn.len
       end
 
-      # Write machine code into memory and use it as a JIT function.
-      iseq.body.jit_func = write(asm)
-    rescue Exception => e
-      abort e.full_message
+      write(asm)
     end
-
-    private
 
     # Write bytes in a given assembler into @jit_buf.
     # @param asm [JIT::Assembler]
@@ -161,6 +201,59 @@ module JIT
       end
 
       jit_addr
+    end
+
+    def split_blocks(iseq, insn_index: 0, stack_size: 0, split_indexes: [])
+      return [] if split_indexes.include?(insn_index)
+
+      split_indexes << insn_index
+
+      block = { start_index: insn_index, end_index: nil, stack_size: }
+      blocks = [block]
+
+      while insn_index < iseq.body.iseq_size
+        insn = INSNS.fetch(C.rb_vm_insn_decode(iseq.body.iseq_encoded[insn_index]))
+        case insn.name
+        when :branchunless
+          block[:end_index] = insn_index
+          stack_size += sp_inc(iseq, insn_index)
+          next_index = insn_index + insn.len
+          blocks += split_blocks(iseq, insn_index: next_index, stack_size:, split_indexes:)
+          blocks += split_blocks(iseq, insn_index: next_index + iseq.body.iseq_encoded[insn_index + 1], stack_size:, split_indexes:)
+          break
+        when :leave
+          block[:end_index] = insn_index
+          break
+        else
+          stack_size += sp_inc(iseq, insn_index)
+          insn_index += insn.len
+        end
+      end
+
+      blocks
+    end
+
+    def sp_inc(iseq, insn_index)
+      insn = INSNS.fetch(C.rb_vm_insn_decode(iseq.body.iseq_encoded[insn_index]))
+      case insn.name
+      in :opt_plus | :opt_minus | :opt_lt | :leave | :branchunless
+        -1
+      in :nop
+        0
+      in :putnil | :putobject_INT2FIX_0_ | :putobject_INT2FIX_1_ | :putobject | :putself | :getlocal_WC_0
+        1
+      in :opt_send_without_block
+        cd = C.rb_call_data.new(iseq.body.iseq_encoded[insn_index + 1])
+        -C.vm_ci_argc(cd.ci)
+      end
+    end
+
+    def with_addr(addr)
+      jit_pos = @jit_pos
+      @jit_pos = addr - @jit_buf
+      yield
+    ensure
+      @jit_pos = jit_pos
     end
   end
 end
