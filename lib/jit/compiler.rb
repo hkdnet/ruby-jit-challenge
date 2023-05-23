@@ -121,7 +121,6 @@ module JIT
 
           branch = Branch.new
           branch.compile = proc do |asm|
-            puts "branch.compile is called"
             dummy_addr = @jit_buf + JIT_BUF_SIZE
             asm.jz(jump_block.fetch(:start_addr, dummy_addr))
             asm.jmp(next_block.fetch(:start_addr, dummy_addr))
